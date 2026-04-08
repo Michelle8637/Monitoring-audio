@@ -23,6 +23,10 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional, Tuple
+from pythonosc import udp_client
+
+IP_PD = "127.0.0.1"
+PORT_PD = 9000
 
 
 @dataclass(frozen=True)
@@ -332,6 +336,10 @@ def build_tshark_command(interface: str) -> List[str]:
 
 
 def run_capture_loop(args: argparse.Namespace) -> int:
+    client = udp_client.SimpleUDPClient("127.0.0.1", 9000)
+
+
+    
     if shutil.which("tshark") is None:
         logging.error("tshark binary was not found in PATH.")
         return 2
