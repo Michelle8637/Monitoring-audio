@@ -390,9 +390,24 @@ def run_capture_loop(args: argparse.Namespace) -> int:
                         continue
 
                     timestamp, ip_src, ip_dst, tcp_flags, tcp_port, frame_len = parsed
+
+                    flags_val = parse_tcp_flags(tcp_flags)
+                    if is_syn_packet(flags_val):
+                        client.send_message("/ping", 1.0)
+
                     suspicious, event_type, intensity = analyzer.process_packet(
                         timestamp, ip_src, ip_dst, tcp_flags, tcp_port, frame_len
                     )
+                    #On prend intensity pour le volume
+
+                    valeur_volume = intensity * 20.0
+                    client.send_message("/volume", float(valeur_volume))
+
+
+
+
+
+
                     if args.timestamp_format == "epoch":
                         ts_field = f"{timestamp:.3f}"
                     elif args.timestamp_format == "both":
