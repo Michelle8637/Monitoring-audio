@@ -1,4 +1,4 @@
-#N canvas 82 51 1292 619 12;
+#N canvas 82 51 1920 989 12;
 #X obj 234 394 bng 19 250 50 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000;
 #X obj 158 104 netreceive -u -b 9000;
 #X obj 152 168 oscparse;
@@ -11,7 +11,7 @@
 #X obj 198 223 list trim;
 #X obj 782 738 dac~;
 #X obj 748 662 *~;
-#X obj 618 309 route volume;
+#X obj 626 339 route volume;
 #X obj 511 437 noise~;
 #X obj 573 482 lop~;
 #X obj 429 201 print;
@@ -19,6 +19,13 @@
 #X obj 666 564 lop~;
 #X msg 792 449 0.3;
 #X msg 982 516 0;
+#X obj 1112 282 route alert;
+#X obj 1290 428 line~;
+#X obj 1147 323 bng 19 250 50 0 empty empty empty 0 -10 0 12 #fcfcfc #000000 #000000;
+#X obj 1238 526 *~;
+#X obj 1100 424 phasor~ 400;
+#X obj 1222 651 dac~;
+#X msg 1157 365 0.75 \, 0 1000;
 #X connect 0 0 3 0;
 #X connect 1 0 2 0;
 #X connect 2 0 9 0;
@@ -30,6 +37,7 @@
 #X connect 8 0 6 0;
 #X connect 8 0 6 1;
 #X connect 9 0 7 0;
+#X connect 9 0 20 0;
 #X connect 11 0 10 0;
 #X connect 11 0 10 1;
 #X connect 12 0 14 1;
@@ -41,3 +49,10 @@
 #X connect 17 0 11 0;
 #X connect 18 0 11 1;
 #X connect 19 0 11 1;
+#X connect 20 0 22 0;
+#X connect 21 0 23 1;
+#X connect 22 0 26 0;
+#X connect 23 0 25 0;
+#X connect 23 0 25 1;
+#X connect 24 0 23 0;
+#X connect 26 0 21 0;
