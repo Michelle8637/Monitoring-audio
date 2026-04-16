@@ -419,6 +419,7 @@ def run_capture_loop(args: argparse.Namespace) -> int:
 
                     if suspicious:
                         suspicious_out.write(out_line)
+                        client.send_message("/alert", 1.0)
                     elif analyzer.should_emit_normal():
                         normal_out.write(out_line)
 
