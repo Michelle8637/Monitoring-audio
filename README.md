@@ -282,9 +282,9 @@ Ameliorations possibles :
 
 ## 14) Auteurs
 
-- Etudiant 1 : [Nom Prenom]
-- Etudiant 2 : [Nom Prenom]
-- Encadrement : [Professeur / Etablissement]
+- Etudiant 1 : Theo MELLIEZ
+- Etudiant 2 : Ange Michelle TCHEMTCHOUA
+- Encadrement : Arthur PATE, Florian ALLEN
 
 ## 15) Licence (a completer)
 
