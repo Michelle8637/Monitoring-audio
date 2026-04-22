@@ -282,10 +282,6 @@ Ameliorations possibles :
 
 ## 14) Auteurs
 
-- Etudiant 1 : Theo MELLIEZ
-- Etudiant 2 : Ange Michelle TCHEMTCHOUA
-- Encadrement : Arthur PATE, Florian ALLEN
-
-## 15) Licence (a completer)
-
-Definir la licence de diffusion selon les consignes de l'etablissement (ex. MIT, CC BY-NC, usage pedagogique interne).
+- Etudiants : Theo MELLIEZ, Ange Michelle TCHEMTCHOUA
+- Encadreurs : Arthur PATE, Florian ALLEIN
+- 
