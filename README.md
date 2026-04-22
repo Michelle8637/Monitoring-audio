@@ -284,4 +284,3 @@ Ameliorations possibles :
 
 - Etudiants : Theo MELLIEZ, Ange Michelle TCHEMTCHOUA
 - Encadreurs : Arthur PATE, Florian ALLEIN
-- 
