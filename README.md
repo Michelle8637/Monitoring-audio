@@ -2,7 +2,7 @@
 
 Ce projet transforme du trafic reseau en evenements sonores afin de faciliter la perception de comportements normaux et suspects en temps reel.
 
-Version simple : au lieu de lire des lignes techniques difficiles, on "entend" le comportement du reseau.
+A la place de lire des lignes techniques difficiles, on "entend" le comportement du reseau.
 - trafic normal = son plus calme ;
 - trafic anormal (pic, scan, flood) = son plus present ou plus agressif.
 
