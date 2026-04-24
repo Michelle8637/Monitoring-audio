@@ -25,18 +25,29 @@ from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional, Tuple
 from pythonosc import udp_client
 
+# Adresse locale de Pure Data.
+# 127.0.0.1 = "ma propre machine".
+# Donc Python et Pure Data communiquent en local.
 IP_PD = "127.0.0.1"
 PORT_PD = 9000
 
 
 @dataclass(frozen=True)
 class SensitivityConfig:
+    # Taille de la fenetre glissante en secondes.
     window_seconds: float
+    # Si une IP envoie trop de paquets dans la fenetre => possible flood.
     ip_packet_threshold: int
+    # Si un port est touche trop souvent => possible scan.
     port_hit_threshold: int
+    # Trop de SYN dans la fenetre => possible syn_flood.
     syn_threshold: int
+    # Multiplicateur pour dire "pic anormal" vs historique recent.
     spike_multiplier: float
+    # Minimum de paquets/s avant de parler de spike.
     spike_min_packets_per_sec: int
+    # On ecrit seulement une partie du trafic normal pour ne pas remplir trop vite.
+    # Exemple: 0.14 = on garde environ 14% des lignes normales.
     normal_sample_ratio: float
 
 
@@ -72,6 +83,9 @@ SENSITIVITY_PRESETS: Dict[str, SensitivityConfig] = {
 
 
 def parse_args() -> argparse.Namespace:
+    # Ici on lit les options de la ligne de commande.
+    # C'est ce qui permet de choisir l'interface reseau, la sensibilite,
+    # et les noms des fichiers de sortie.
     parser = argparse.ArgumentParser(
         description="Real-time tshark analyzer with normal+suspicious output streams."
     )
@@ -115,6 +129,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def parse_tcp_port(raw: str) -> str:
+    # Nettoie le champ port. Si vide, on met "-".
     if not raw:
         return "-"
     # tshark may emit "443,80" in some cases.
@@ -123,6 +138,8 @@ def parse_tcp_port(raw: str) -> str:
 
 
 def parse_tcp_flags(raw: str) -> int:
+    # Transforme les flags TCP en entier (ex: 0x02 pour SYN).
+    # Si le champ est invalide, on retourne 0 pour eviter un crash.
     if not raw:
         return 0
     text = raw.strip().lower()
@@ -135,11 +152,14 @@ def parse_tcp_flags(raw: str) -> int:
 
 
 def is_syn_packet(flags_value: int) -> bool:
+    # Test simple du bit SYN.
+    # SYN veut dire "debut de connexion TCP".
     syn_bit = 0x02
     return bool(flags_value & syn_bit)
 
 
 def clamp_int(value: float, low: int = 0, high: int = 100) -> int:
+    # Force une valeur a rester entre low et high.
     return max(low, min(high, int(value)))
 
 
@@ -152,7 +172,11 @@ def format_ts_iso_local(timestamp: float) -> str:
 class RollingTrafficAnalyzer:
     def __init__(self, cfg: SensitivityConfig, history_seconds: int) -> None:
         self.cfg = cfg
+        # Fenetre glissante: on garde les paquets recents seulement.
+        # C'est important: on veut decrire "ce qui se passe maintenant",
+        # pas ce qui s'est passe il y a 5 minutes.
         self.window: Deque[Tuple[float, str, str, bool, int]] = deque()
+        # Compteurs utilises pour les regles de detection.
         self.ip_counts: Dict[str, int] = defaultdict(int)
         self.port_counts: Dict[str, int] = defaultdict(int)
         self.syn_count = 0
@@ -165,6 +189,8 @@ class RollingTrafficAnalyzer:
         self.sec_history: Deque[Tuple[int, int]] = deque(maxlen=max(3, history_seconds))
 
     def _prune_old(self, now_ts: float) -> None:
+        # Supprime les paquets trop anciens de la fenetre.
+        # En meme temps, on baisse les compteurs associes a ces vieux paquets.
         cutoff = now_ts - self.cfg.window_seconds
         while self.window and self.window[0][0] < cutoff:
             old_ts, old_src, old_port, old_syn, old_len = self.window.popleft()
@@ -183,6 +209,9 @@ class RollingTrafficAnalyzer:
             self.total_packets = max(0, self.total_packets - 1)
 
     def _update_spike_buckets(self, packet_ts: float) -> Tuple[float, int]:
+        # Compte les paquets par seconde pour detecter les pics (spike).
+        # baseline_avg = moyenne recente (niveau habituel).
+        # current_pps = trafic de la seconde en cours.
         sec = int(packet_ts)
         if self.current_sec is None:
             self.current_sec = sec
@@ -203,12 +232,21 @@ class RollingTrafficAnalyzer:
     def process_packet(
         self, timestamp: float, ip_src: str, ip_dst: str, tcp_flags_raw: str, tcp_port_raw: str, frame_len: int
     ) -> Tuple[bool, str, int]:
+        # Cette fonction est le "cerveau" de la detection:
+        # elle lit un paquet et decide:
+        # - suspect ou non
+        # - type d'evenement (normal/flood/scan/syn_flood/spike)
+        # - intensite (0..100) pour la sonification
+
+        # 1) On nettoie la fenetre glissante.
         self._prune_old(timestamp)
 
+        # 2) On extrait les infos utiles du paquet.
         port = parse_tcp_port(tcp_port_raw)
         flags_val = parse_tcp_flags(tcp_flags_raw)
         syn = is_syn_packet(flags_val)
 
+        # 3) On met a jour les compteurs.
         self.window.append((timestamp, ip_src, port, syn, frame_len))
         if ip_src != "-":
             self.ip_counts[ip_src] += 1
@@ -219,12 +257,16 @@ class RollingTrafficAnalyzer:
         self.total_bytes += frame_len
         self.total_packets += 1
 
+        # 4) On calcule des infos globales de trafic.
         baseline_pps, current_pps = self._update_spike_buckets(timestamp)
         avg_size = (self.total_bytes / self.total_packets) if self.total_packets else 0.0
 
         ip_freq = self.ip_counts.get(ip_src, 0) if ip_src != "-" else 0
         port_freq = self.port_counts.get(port, 0) if port != "-" else 0
 
+        # 5) Regles pour classer le trafic.
+        # Ce sont des heuristiques (regles simples), pas de l'IA.
+        # Donc c'est utile pour une demo, mais ce n'est pas un IDS parfait.
         reasons: List[str] = []
         if ip_src != "-" and ip_freq >= self.cfg.ip_packet_threshold:
             reasons.append("flood")
@@ -247,9 +289,14 @@ class RollingTrafficAnalyzer:
         if spike:
             reasons.append("spike")
 
+        # Si au moins une regle est vraie => evenement suspect.
         suspicious = len(reasons) > 0
+        # On garde le premier type pour rester simple dans le fichier txt.
+        # Ordre actuel des priorites: flood, scan, syn_flood, spike.
         event_type = reasons[0] if suspicious else "normal"
 
+        # Base de l'intensite:
+        # plus le trafic est fort/anormal, plus l'intensite monte (0 a 100).
         intensity_components = [
             frame_len / 1500.0,
             (ip_freq / max(1, self.cfg.ip_packet_threshold)),
@@ -259,14 +306,19 @@ class RollingTrafficAnalyzer:
             (avg_size / 900.0),
         ]
         if suspicious:
+            # En suspect: on prend le composant le plus fort.
+            # Objectif: faire ressortir rapidement les alertes au niveau sonore.
             intensity = clamp_int(max(intensity_components) * 100.0, 5, 100)
         else:
+            # En normal: niveau plus doux pour ne pas saturer la sonification.
             intensity = clamp_int((intensity_components[0] * 0.7 + intensity_components[-1] * 0.3) * 70.0, 1, 70)
 
         _ = ip_dst  # currently not used for detection but kept for output.
         return suspicious, event_type, intensity
 
     def should_emit_normal(self) -> bool:
+        # Echantillonnage: on n'ecrit pas chaque paquet normal.
+        # Sinon le fichier normal_stream grossit tres vite.
         self.normal_emit_counter += 1
         ratio = self.cfg.normal_sample_ratio
         if ratio <= 0:
@@ -276,6 +328,8 @@ class RollingTrafficAnalyzer:
 
 
 def parse_tshark_line(raw_line: str) -> Optional[Tuple[float, str, str, str, str, int]]:
+    # Convertit une ligne tshark en tuple Python propre.
+    # Si la ligne est invalide/incomplete, on retourne None et on passe a la suite.
     line = raw_line.strip()
     if not line:
         return None
@@ -308,6 +362,9 @@ def parse_tshark_line(raw_line: str) -> Optional[Tuple[float, str, str, str, str
 
 
 def build_tshark_command(interface: str) -> List[str]:
+    # Commande tshark en mode "fields" pour avoir une ligne simple a parser.
+    # On extrait seulement ce dont on a besoin pour la sonification:
+    # temps, IP source/destination, flags TCP, port TCP, taille du paquet.
     return [
         "tshark",
         "-l",  # line-buffered output
@@ -336,10 +393,10 @@ def build_tshark_command(interface: str) -> List[str]:
 
 
 def run_capture_loop(args: argparse.Namespace) -> int:
-    client = udp_client.SimpleUDPClient("127.0.0.1", 9000)
+    # Client OSC: envoi des infos vers Pure Data (ping/volume/alert).
+    client = udp_client.SimpleUDPClient(IP_PD, PORT_PD)
 
 
-    
     if shutil.which("tshark") is None:
         logging.error("tshark binary was not found in PATH.")
         return 2
@@ -367,6 +424,7 @@ def run_capture_loop(args: argparse.Namespace) -> int:
     with open(args.normal_output, "a", encoding="utf-8", buffering=1) as normal_out, open(
         args.suspicious_output, "a", encoding="utf-8", buffering=1
     ) as suspicious_out:
+        # Boucle principale: capture -> analyse -> sonification -> ecriture txt.
         while not stop_requested:
             process: Optional[subprocess.Popen[str]] = None
             try:
@@ -387,18 +445,21 @@ def run_capture_loop(args: argparse.Namespace) -> int:
 
                     parsed = parse_tshark_line(raw_line)
                     if parsed is None:
+                        # Ligne non exploitable: on ignore et on continue.
                         continue
 
                     timestamp, ip_src, ip_dst, tcp_flags, tcp_port, frame_len = parsed
 
                     flags_val = parse_tcp_flags(tcp_flags)
                     if is_syn_packet(flags_val):
+                        # Petit "ping sonore" quand on voit un paquet SYN.
                         client.send_message("/ping", 1.0)
 
                     suspicious, event_type, intensity = analyzer.process_packet(
                         timestamp, ip_src, ip_dst, tcp_flags, tcp_port, frame_len
                     )
-                    #On prend intensity pour le volume
+                    # Intensity pilote le volume dans Pure Data.
+                    # Plus intensity est haute, plus le son peut etre fort.
 
                     valeur_volume = intensity * 20.0
                     client.send_message("/volume", float(valeur_volume))
@@ -416,11 +477,15 @@ def run_capture_loop(args: argparse.Namespace) -> int:
                         ts_field = format_ts_iso_local(timestamp)
 
                     out_line = f"{ts_field} {ip_src} {ip_dst} {intensity} {event_type}\n"
+                    # Exemple de ligne ecrite:
+                    # 2026-04-23T14:52:11.120 192.168.1.10 8.8.8.8 62 normal
 
                     if suspicious:
+                        # Cas suspect: on ecrit dans suspicious_stream.txt + alerte audio.
                         suspicious_out.write(out_line)
                         client.send_message("/alert", 1.0)
                     elif analyzer.should_emit_normal():
+                        # Cas normal: ecriture echantillonnee dans normal_stream.txt.
                         normal_out.write(out_line)
 
                 if stop_requested:
@@ -431,14 +496,17 @@ def run_capture_loop(args: argparse.Namespace) -> int:
                     stderr_output = process.stderr.read().strip()
                 return_code = process.wait(timeout=1)
                 if return_code != 0:
+                    # Si tshark plante, on log le probleme et on relance ensuite.
                     logging.warning("tshark exited with code %s. stderr=%s", return_code, stderr_output or "<empty>")
                 else:
+                    # Cas rare: tshark s'arrete sans erreur.
                     logging.warning("tshark exited unexpectedly with code 0. Restarting...")
 
             except Exception as exc:
                 logging.exception("Capture loop error: %s", exc)
             finally:
                 if process is not None and process.poll() is None:
+                    # Nettoyage pour eviter de laisser un processus bloque.
                     process.terminate()
                     try:
                         process.wait(timeout=1.5)
